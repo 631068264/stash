@@ -5,7 +5,10 @@ Stash
 Keys are arbitrary strings,values arbitrary pickle-able objects.
 
 ## Usage:
-I use this to save program running state or data in memory when the program stop accidentally
+`pip install six` for Python compatibility
+
+> I use this to save program running state or data in memory when the program stop accidentally
+
 ```
 with Stash('sss.sqlite', table_name='ss') as stash:
     stash["foo"] = "fuck"
