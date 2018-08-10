@@ -33,9 +33,11 @@ def decode(obj):
 
 
 class Stash(DictMixin):
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "stash")
 
     def __init__(self, file_name, table_name='kv', encode=encode, decode=decode):
         # TODO:use other Serialization
+        file_name = os.path.join(self.path, file_name + '.sqlite3')
         dir_name = os.path.dirname(file_name)
         if dir_name and not os.path.exists(dir_name):
             raise RuntimeError('The directory does not exist, %s' % dir_name)
@@ -204,7 +206,7 @@ if __name__ == '__main__':
             return self.t + d
 
 
-    with Stash('sss.sqlite', table_name='ss') as stash:
+    with Stash('sss', table_name='ss') as stash:
         stash.clear()
         assert len(stash) == 0
         stash["13"] = "qwer"
