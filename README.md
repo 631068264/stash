@@ -10,23 +10,14 @@ Keys are arbitrary strings,values arbitrary pickle-able objects.
 > I use this to save program running state or data in memory when the program stop accidentally
 
 ```
-with Stash('sss.sqlite', table_name='ss') as stash:
-    stash["foo"] = "fuck"
-    stash['和谐'] = '健康'
-    del stash["foo"]
-    del stash["15"]
-    del stash['和谐']
-```
-
-```
-stash =  Stash('sss.sqlite', table_name='ss')
+stash = Stash('sss.sqlite', table_name='ss')
 stash["foo"] = "fuck"
 stash['和谐'] = '健康'
 del stash["foo"]
 del stash["15"]
 del stash['和谐']
-stash.close()
 ```
+
 More usage refer to **stash.py**
 
 ## Features
