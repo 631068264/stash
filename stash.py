@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 @author = 'wyx'
-@time = 2018/7/10 15:47
+@time = 2018/12/1 16:53
 @annotation = ''
 """
+
 import os
+import pprint
 import sqlite3
+from contextlib import contextmanager
 
 import six
 
@@ -46,10 +49,7 @@ class Stash(DictMixin):
         self.encode = encode
         self.decode = decode
         self.conn = None
-
-        self._connect()
-
-    def _sql(self):
+        # sql schema
         self._CREATE_TABLE = 'CREATE TABLE IF NOT EXISTS {} (key TEXT PRIMARY KEY, val BLOB)'.format(self.table_name)
         self._SET = 'REPLACE INTO {} (key, val) VALUES (?, ?)'.format(self.table_name)
         self._GET = 'SELECT val FROM {} WHERE key = ?'.format(self.table_name)
@@ -62,22 +62,28 @@ class Stash(DictMixin):
         # VACUUM can reduce size of table after clear table
         self._CLEAR = 'DELETE FROM {}; VACUUM;'.format(self.table_name)
 
+        self._create()
+
     def _connect(self):
-        self._sql()
+        # self._sql()
         self.conn = sqlite3.connect(self.file_name)
         self.conn.text_factory = str
         self.cursor = self.conn.cursor()
-        self.cursor.execute(self._CREATE_TABLE)
-        self._commit()
+        # self.cursor.execute(self._CREATE_TABLE)
+        # self._commit()
 
     def _commit(self):
         if self.conn:
             self.conn.commit()
 
+    def _create(self):
+        with self.with_stash():
+            self.cursor.execute(self._CREATE_TABLE)
+
     def __setitem__(self, key, value):
         """x.__setitem__(k, v) <==> x[k] = v"""
-        self.cursor.execute(self._SET, (key, self.encode(value)))
-        self._commit()
+        with self.with_stash():
+            self.cursor.execute(self._SET, (key, self.encode(value)))
 
     def _select(self, key_list, default=None):
         temp_get_many_sql = self._GET_MANY % ','.join('?' * len(key_list))
@@ -87,35 +93,38 @@ class Stash(DictMixin):
 
     def __getitem__(self, key):
         """x.__getitem__(k) <==> x[k]"""
-        if not isinstance(key, six.string_types) and isinstance(key, Sequence):
-            return self._select(key)
+        with self.with_stash():
+            if not isinstance(key, six.string_types) and isinstance(key, Sequence):
+                return self._select(key)
 
-        self.cursor.execute(self._GET, (key,))
-        val = self.cursor.fetchone()
-        if not val:
-            raise KeyError(key)
-        return self.decode(val[0])
+            self.cursor.execute(self._GET, (key,))
+            val = self.cursor.fetchone()
+            if not val:
+                raise KeyError(key)
+            return self.decode(val[0])
 
     def __contains__(self, key):
         """x.__contains__(k) -> True if key in x, else False"""
-        self.cursor.execute(self._GET, (key,))
-        val = self.cursor.fetchone()
-        if not val:
-            return False
-        return True
+        with self.with_stash():
+            self.cursor.execute(self._GET, (key,))
+            val = self.cursor.fetchone()
+            if not val:
+                return False
+            return True
 
     def __delitem__(self, key):
         """x.__delitem__(k) <==> del x[k] don't raise error when key not exist"""
-        self.cursor.execute(self._DEL, (key,))
-        self._commit()
+        with self.with_stash():
+            self.cursor.execute(self._DEL, (key,))
 
     def __len__(self):
-        self.cursor.execute(self._COUNT)
-        count = self.cursor.fetchone()[0]
-        return count if count else 0
+        with self.with_stash():
+            self.cursor.execute(self._COUNT)
+            count = self.cursor.fetchone()[0]
+            return count if count else 0
 
     def __repr__(self):
-        return repr(dict(self.items()))
+        return pprint.pformat(dict(self.items()))
 
     def get(self, key, default=None):
         try:
@@ -139,20 +148,21 @@ class Stash(DictMixin):
         except AttributeError:
             pass
         items = [(k, self.encode(v)) for k, v in items]
-        self.cursor.executemany(self._SET, items)
-        self._commit()
+        with self.with_stash():
+            self.cursor.executemany(self._SET, items)
         if kwargs:
             self.update(kwargs)
 
     def clear(self):
-        self.cursor.executescript(self._CLEAR)
-        self._commit()
+        with self.with_stash():
+            self.cursor.executescript(self._CLEAR)
 
     def close(self):
         if self.conn is not None:
             self.conn.commit()
             self.conn.close()
             self.conn = None
+            self.cursor = None
 
     def rm_db(self):
         """remove file"""
@@ -166,28 +176,39 @@ class Stash(DictMixin):
 
     # Iteration
     def items(self):
-        for k, v in self.cursor.execute(self._GET_ITEM):
-            yield k, self.decode(v)
+        with self.with_stash():
+            for k, v in self.cursor.execute(self._GET_ITEM):
+                yield k, self.decode(v)
 
     def keys(self):
-        for k in self.cursor.execute(self._GET_KEY):
-            yield k[0]
+        with self.with_stash():
+            for k in self.cursor.execute(self._GET_KEY):
+                yield k[0]
 
     def values(self):
-        for v in self.cursor.execute(self._GET_VALUE):
-            yield self.decode(v[0])
+        with self.with_stash():
+            for v in self.cursor.execute(self._GET_VALUE):
+                yield self.decode(v[0])
 
     def __iter__(self):
         return self.keys()
 
     # With contextmanager
-    def __enter__(self):
-        if not hasattr(self, 'conn') or self.conn is None:
-            self._connect()
-        return self
+    # def __enter__(self):
+    #     if not hasattr(self, 'conn') or self.conn is None:
+    #         self._connect()
+    #     return self
+    #
+    # def __exit__(self, exc_type, exc_val, exc_tb):
+    #     self.close()
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+    @contextmanager
+    def with_stash(self):
+        self._connect()
+        try:
+            yield self.cursor
+        finally:
+            self.close()
 
     def __del__(self):
         if self.conn is not None:
@@ -206,58 +227,61 @@ if __name__ == '__main__':
             return self.t + d
 
 
-    with Stash('sss', table_name='ss') as stash:
-        stash.clear()
-        assert len(stash) == 0
-        stash["13"] = "qwer"
-        assert stash["13"] == "qwer"
-        stash['和谐'] = '健康'
-        assert stash['和谐'] == '健康'
+    stash = Stash('sss', table_name='ss')
+    stash.clear()
+    assert len(stash) == 0
+    stash["13"] = "qwer"
+    assert stash["13"] == "qwer"
+    stash['和谐'] = '健康'
+    assert stash['和谐'] == '健康'
 
-        assert ("13" in stash) is True
+    assert ("13" in stash) is True
 
-        del stash["13"]
-        del stash["15"]
-        del stash['和谐']
+    del stash["13"]
+    del stash["15"]
+    del stash['和谐']
+    del stash['inexistence key']
 
-        assert (stash.get("15")) is None
-        assert (stash.get('15', default=123) == 123)
+    assert (stash.get("15")) is None
+    assert (stash.get('15', default=123) == 123)
 
-        stash.setdefault('sd', default=123)
-        assert stash['sd'] == 123
-        stash.setdefault('sd', default=444)
-        assert stash['sd'] == 123
+    stash.setdefault('sd', default=123)
+    assert stash['sd'] == 123
+    stash.setdefault('sd', default=444)
+    assert stash['sd'] == 123
 
-        assert stash == {'sd': 123}
-        assert len(stash) == 1
+    assert stash == {'sd': 123}
+    assert len(stash) == 1
 
-        assert list(stash.keys()) == ['sd']
-        assert list(stash.values()) == [123]
-        assert list(stash.items()) == [('sd', 123)]
+    assert list(stash.keys()) == ['sd']
+    assert list(stash.values()) == [123]
+    assert list(stash.items()) == [('sd', 123)]
 
-        stash.update(red=1, blue='adfdfaf')
-        assert len(stash) == 3
-        assert stash['blue'] == 'adfdfaf'
-        # assert stash == {'blue': 'adfdfaf', 'red': 1, 'sd': 123}
+    stash.update(red=1, blue='adfdfaf')
+    assert len(stash) == 3
+    assert stash['blue'] == 'adfdfaf'
+    # assert stash == {'blue': 'adfdfaf', 'red': 1, 'sd': 123}
 
-        stash.update({'red': 2, 'blue': 4})
-        # assert stash == {'red': 2, 'blue': 4, 'sd': 123}
-        assert stash['blue'] == 4
+    stash.update({'red': 2, 'blue': 4})
+    # assert stash == {'red': 2, 'blue': 4, 'sd': 123}
+    assert stash['blue'] == 4
 
-        stash['obj'] = Test()
-        assert stash['obj'].c(2) == 3
-        assert stash['obj'].a == 0
+    stash['obj'] = Test()
+    assert stash['obj'].c(2) == 3
+    assert stash['obj'].a == 0
 
-        stash['123'] = 1
-        stash['啦啦啦'] = 1
-        s = stash['123', '啦啦啦', 'aaa']
-        assert s['aaa'] is None
-        s = stash[['123', '啦啦啦', 'aaa']]
-        assert s['aaa'] is None
+    stash['123'] = 1
+    stash['啦啦啦'] = 1
+    s = stash['123', '啦啦啦', 'aaa']
+    assert s['aaa'] is None
+    s = stash[['123', '啦啦啦', 'aaa']]
+    assert s['aaa'] is None
 
-        stash['123'] = [0] * 100000
+    stash['123'] = [0] * 100000
 
-        stash[1] = 123
-        assert stash[1] == 123
-        stash.clear()
-        stash.rm_db()
+    stash[1] = 123
+    assert stash[1] == 123
+
+    print(stash)
+    stash.clear()
+    stash.rm_db()
